@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "878200225022",
+    "project_id": "m-nirog",
+    "storage_bucket": "m-nirog.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:878200225022:android:4a06038b5cea7f8564b9af",
+        "android_client_info": {
+          "package_name": "com.example.m_nirog"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCH6B_4ul6oTTMvmdF_ILUClfEgoGNgYVk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

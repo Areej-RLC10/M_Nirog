@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+build/
+uploads/
+.idea/
+*.iml
+.DS_Store
+.env
+.env.*
+*firebase*.json
+*.jks
+*.keystore

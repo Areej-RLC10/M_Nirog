@@ -1,3 +1,58 @@
 <resources>
     <string name="app_name">M-Nirog</string>
+    <string name="nav_back">Back</string>
+    <string name="tab_checkup">Checkup</string>
+    <string name="tab_bookings">Bookings</string>
+    <string name="tab_profile">Profile</string>
+
+    <string name="login_title">Log in</string>
+    <string name="phone_number">Phone number</string>
+    <string name="send_otp">Send OTP</string>
+    <string name="otp_code">OTP code</string>
+    <string name="dev_otp_hint">Dev mode: any 6 digits works.</string>
+    <string name="verify_continue">Verify and continue</string>
+
+    <string name="consent_title">Your health data</string>
+    <string name="consent_checkbox">I agree to allow M-Nirog to collect and store my health records securely.</string>
+    <string name="continue_btn">Continue</string>
+
+    <string name="order_summary_title">Order summary</string>
+    <string name="proceed_to_pay">Proceed to Pay</string>
+    <string name="pay_with_khalti_fake">Pay with Khalti (fake)</string>
+    <string name="slot_held_for">Your slot is held for %1$d:%2$02d</string>
+    <string name="slot_hold_hint">Complete payment before the hold timer expires.</string>
+    <string name="slot_hold_expired_title">Your slot hold expired</string>
+    <string name="slot_hold_expired_body">You were not charged. Please choose a time again.</string>
+    <string name="choose_another_slot">Choose another slot</string>
+
+    <string name="my_bookings_title">My bookings</string>
+    <string name="no_bookings_title">No bookings yet</string>
+    <string name="no_bookings_body">Book your first checkup. A picker comes to your home.</string>
+    <string name="book_a_checkup">Book a checkup</string>
+
+    <string name="verify_results">Verify results</string>
+    <string name="view_report">View report</string>
+    <string name="book_again">Book again</string>
+    <string name="book_another">Book another checkup</string>
+    <string name="contact_support">Contact support</string>
+    <string name="view_recollection_details">View recollection details</string>
+
+    <string name="profile_title">Profile</string>
+    <string name="save_profile">Save profile</string>
+    <string name="health_records">Health records</string>
+    <string name="open_picker_mode">Picker view (Staff)</string>
+
+    <string name="picker_pickups_title">Assigned pickups</string>
+    <string name="picker_pickup_detail_title">Pickup job</string>
+    <string name="picker_arrived">I have arrived</string>
+    <string name="picker_call_patient">Call patient</string>
+    <string name="picker_wait_remaining">Wait before no-show: %1$d:%2$02d</string>
+    <string name="picker_wait_done">15-minute wait finished. Photo proof enabled.</string>
+    <string name="picker_sample_code_label">Sample tube barcode</string>
+    <string name="picker_scan_barcode">Scan sample barcode</string>
+    <string name="picker_confirm_collected">Confirm sample collected</string>
+    <string name="picker_take_photo_proof">Take doorway photo proof</string>
+    <string name="picker_photo_attached">Doorway photo proof attached</string>
+    <string name="picker_mark_no_show">Mark patient no-show</string>
+    <string name="picker_back_to_patient">Back to patient view</string>
 </resources>

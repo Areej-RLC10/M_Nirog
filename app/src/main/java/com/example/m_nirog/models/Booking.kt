@@ -11,7 +11,6 @@ data class TimeSlot(val id: String, val label: String, val remaining: Int) {
     val isFull: Boolean get() = remaining <= 0
 }
 
-/** Mirrors the server status list. UNKNOWN keeps the app alive if the server adds a status. */
 enum class BookingStatus(val patientLabel: String) {
     PENDING_PAYMENT("Payment pending"),
     PAID("Booking confirmed"),
@@ -34,7 +33,6 @@ enum class BookingStatus(val patientLabel: String) {
     }
 }
 
-/** Steps shown on the status timeline, in happy-path order. */
 val TimelineSteps = listOf(
     BookingStatus.PAID,
     BookingStatus.PICKER_ASSIGNED,
@@ -57,6 +55,9 @@ data class Booking(
     val holdExpiresAtMillis: Long,
     val pickerName: String? = null,
     val pickerPhone: String? = null,
+    val recollectionReason: String? = null,
+    val recollectionCount: Int = 0,
+    val isUrgent: Boolean = false,
 )
 
 data class BookingRequest(
@@ -67,13 +68,11 @@ data class BookingRequest(
     val address: String,
 )
 
-/** Statuses where the booking is over. The patient sees a message, not a timeline. */
 val BookingStatus.isFinal: Boolean
     get() = this == BookingStatus.CANCELLED ||
         this == BookingStatus.EXPIRED ||
         this == BookingStatus.PATIENT_NO_SHOW
 
-/** Which timeline step to highlight for statuses that are not on the happy path. */
 val BookingStatus.timelineAnchor: BookingStatus
     get() = when (this) {
         BookingStatus.RECOLLECTION_REQUIRED -> BookingStatus.PICKER_ASSIGNED

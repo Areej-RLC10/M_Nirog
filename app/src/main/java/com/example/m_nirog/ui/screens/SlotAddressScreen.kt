@@ -20,11 +20,29 @@ import com.example.m_nirog.ui.components.ErrorText
 import com.example.m_nirog.ui.components.NirogScaffold
 import com.example.m_nirog.ui.components.PrimaryButton
 import com.example.m_nirog.ui.viewmodels.BookingViewModel
+import com.example.m_nirog.ui.viewmodels.ProfileViewModel
 
 @Composable
-fun SlotAddressScreen(vm: BookingViewModel, onBack: () -> Unit, onContinue: () -> Unit) {
+fun SlotAddressScreen(
+    vm: BookingViewModel,
+    profileVm: ProfileViewModel,
+    onBack: () -> Unit,
+    onContinue: () -> Unit,
+) {
     val s by vm.state.collectAsState()
-    LaunchedEffect(Unit) { vm.loadDays() }
+    val profileState by profileVm.state.collectAsState()
+
+    LaunchedEffect(Unit) {
+        vm.loadDays()
+        profileVm.load()
+    }
+
+    val allSaved = profileState.profile.addresses
+    val matchingSaved = if (s.city != null) {
+        allSaved.filter { it.city == s.city }
+    } else {
+        allSaved
+    }
 
     NirogScaffold("Date, time and address", onBack) {
         Text("City", style = MaterialTheme.typography.titleSmall)
@@ -53,6 +71,37 @@ fun SlotAddressScreen(vm: BookingViewModel, onBack: () -> Unit, onContinue: () -
                         onClick = { vm.setSlot(slot) },
                         label = { Text(if (slot.isFull) "${slot.label} · Full" else slot.label) },
                     )
+                }
+            }
+        }
+
+        if (allSaved.isNotEmpty()) {
+            Text("Saved addresses", style = MaterialTheme.typography.titleSmall)
+            if (matchingSaved.isEmpty() && s.city != null) {
+                Text(
+                    "No saved addresses for ${s.city!!.label} yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    matchingSaved.forEach { addr ->
+                        val isSelected = s.city == addr.city && s.address.trim() == addr.street.trim()
+                        val chipLabel = if (s.city == null) "${addr.city.label} · ${addr.street}" else addr.street
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                if (s.city != addr.city) {
+                                    vm.setCity(addr.city)
+                                }
+                                vm.setAddress(addr.street)
+                            },
+                            label = { Text(chipLabel) },
+                        )
+                    }
                 }
             }
         }

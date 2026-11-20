@@ -4,12 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.m_nirog.data.BookingRepository
 import com.example.m_nirog.data.FakeBookingRepository
+import com.example.m_nirog.data.RemoteBookingRepository
 import com.example.m_nirog.data.friendlyMessage
 import com.example.m_nirog.models.Booking
-import com.example.m_nirog.models.BookingStatus
 import com.example.m_nirog.models.BookingRequest
+import com.example.m_nirog.models.BookingStatus
 import com.example.m_nirog.models.CheckupPackage
 import com.example.m_nirog.models.City
+import com.example.m_nirog.models.KhaltiCheckoutSession
 import com.example.m_nirog.models.SlotDay
 import com.example.m_nirog.models.TimeSlot
 import kotlinx.coroutines.CancellationException
@@ -29,6 +31,10 @@ data class BookingUiState(
     val slot: TimeSlot? = null,
     val address: String = "",
     val booking: Booking? = null,
+    val khaltiSession: KhaltiCheckoutSession? = null,
+    val pendingKhaltiPidx: String? = null,
+    val paymentStatusMessage: String? = null,
+    val paymentFailed: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
 ) {
@@ -97,11 +103,90 @@ class BookingViewModel(
         launchWork {
             val request = BookingRequest(pkg.id, city, day.isoDate, slot.id, s.address.trim())
             val booking = repo.createBooking(request, day.label, slot.label)
-            _state.update { it.copy(booking = booking) }
+            _state.update { it.copy(booking = booking, paymentFailed = false, paymentStatusMessage = null) }
         }
     }
 
-    /** Slice 1 fake payment. Slice 2: open Khalti, then call verify, same as here. */
+    fun openBooking(bookingId: String) {
+        launchWork {
+            val b = repo.getBooking(bookingId)
+            _state.update { it.copy(booking = b) }
+        }
+    }
+
+    fun payWithKhalti() {
+        val id = _state.value.booking?.id ?: return
+        val remote = repo as? RemoteBookingRepository ?: run {
+            payFake()
+            return
+        }
+        launchWork {
+            val session = remote.initiateKhalti(id)
+            _state.update {
+                it.copy(
+                    khaltiSession = session,
+                    pendingKhaltiPidx = session.pidx,
+                    paymentFailed = false,
+                    paymentStatusMessage = null,
+                )
+            }
+        }
+    }
+
+    fun dismissKhaltiCheckout() {
+        _state.update {
+            it.copy(
+                khaltiSession = null,
+                error = "Khalti checkout closed before completion. Your slot is still held.",
+            )
+        }
+    }
+
+    fun onKhaltiRedirect(pidxFromUrl: String?, statusFromUrl: String?) {
+        val resolvedPidx = pidxFromUrl ?: _state.value.pendingKhaltiPidx
+        _state.update {
+            it.copy(
+                khaltiSession = null,
+                pendingKhaltiPidx = resolvedPidx,
+                paymentStatusMessage = statusFromUrl?.let { st -> "Khalti returned: $st. Verifying on server..." },
+            )
+        }
+        verifyKhaltiPayment(resolvedPidx)
+    }
+
+    fun verifyKhaltiPayment(pidxOverride: String? = null) {
+        val id = _state.value.booking?.id ?: return
+        val remote = repo as? RemoteBookingRepository ?: return
+        val pidx = pidxOverride ?: _state.value.pendingKhaltiPidx
+        launchWork {
+            val res = remote.verifyKhalti(id, pidx)
+            val terminalFailure = res.booking.status != BookingStatus.PAID &&
+                res.paymentStatus in setOf("Expired", "User canceled", "Failed", "Refunded")
+            _state.update {
+                it.copy(
+                    booking = res.booking,
+                    pendingKhaltiPidx = if (res.booking.status == BookingStatus.PAID || terminalFailure) null else pidx,
+                    paymentFailed = terminalFailure || res.booking.status == BookingStatus.EXPIRED,
+                    paymentStatusMessage = when {
+                        res.booking.status == BookingStatus.PAID -> null
+                        terminalFailure -> "Payment status: ${res.paymentStatus}"
+                        else -> "Khalti status: ${res.paymentStatus}. Tap Refresh status in a moment."
+                    },
+                )
+            }
+        }
+    }
+
+    fun refreshOrVerifyKhalti() {
+        if (!_state.value.pendingKhaltiPidx.isNullOrBlank()) {
+            verifyKhaltiPayment()
+        } else {
+            refresh()
+        }
+    }
+
+    fun consumePaymentFailed() = _state.update { it.copy(paymentFailed = false) }
+
     fun payFake() = updateBooking { repo.verifyPayment(it) }
     fun cancel() = updateBooking { repo.cancelBooking(it) }
     fun devAdvance() = updateBooking { repo.devAdvance(it) }
@@ -109,8 +194,22 @@ class BookingViewModel(
     fun expire() = updateBooking { repo.expireBooking(it) }
     fun devSet(status: BookingStatus) = updateBooking { repo.devSetStatus(it, status) }
 
-    /** After an expired hold: forget the booking and the chosen slot so the patient can pick again. */
-    fun startOver() = _state.update { it.copy(booking = null, slot = null, error = null) }
+    fun devUrgent() = updateBooking { id ->
+        (repo as? RemoteBookingRepository)?.devSetUrgent(id)
+            ?: repo.devSetStatus(id, BookingStatus.COMPLETED)
+    }
+
+    fun startOver() = _state.update {
+        it.copy(
+            booking = null,
+            slot = null,
+            khaltiSession = null,
+            pendingKhaltiPidx = null,
+            paymentStatusMessage = null,
+            paymentFailed = false,
+            error = null,
+        )
+    }
 
     private fun updateBooking(call: suspend (String) -> Booking) {
         val id = _state.value.booking?.id ?: return

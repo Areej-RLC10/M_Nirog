@@ -1,6 +1,9 @@
 package com.example.m_nirog.data
 
+import com.example.m_nirog.core.DevConfig
+import com.example.m_nirog.core.NepalTime
 import com.example.m_nirog.models.Booking
+import com.example.m_nirog.models.BookingListItem
 import com.example.m_nirog.models.BookingRequest
 import com.example.m_nirog.models.BookingStatus
 import com.example.m_nirog.models.CheckupPackage
@@ -19,6 +22,7 @@ interface BookingRepository {
     suspend fun createBooking(request: BookingRequest, dateLabel: String, slotLabel: String): Booking
     suspend fun verifyPayment(bookingId: String): Booking
     suspend fun getBooking(bookingId: String): Booking
+    suspend fun getMyBookings(): List<BookingListItem>
     suspend fun cancelBooking(bookingId: String): Booking
     suspend fun expireBooking(bookingId: String): Booking
     suspend fun devSetStatus(bookingId: String, status: BookingStatus): Booking
@@ -31,7 +35,6 @@ class FakeBookingRepository : BookingRepository {
         CheckupPackage("p-ncd", "NCD", "NCD", "Coming soon", 0, false),
         CheckupPackage("p-joint", "JOINT_PAIN", "Joint Pain", "Coming soon", 0, false),
     )
-    private val bookings = mutableMapOf<String, Booking>()
 
     override suspend fun getPackages(): List<CheckupPackage> {
         delay(300)
@@ -55,6 +58,7 @@ class FakeBookingRepository : BookingRepository {
 
     override suspend fun createBooking(request: BookingRequest, dateLabel: String, slotLabel: String): Booking {
         delay(400)
+        seedIfNeeded()
         val pkg = packages.first { it.id == request.packageId }
         val booking = Booking(
             id = UUID.randomUUID().toString(),
@@ -66,7 +70,7 @@ class FakeBookingRepository : BookingRepository {
             status = BookingStatus.PENDING_PAYMENT,
             holdExpiresAtMillis = System.currentTimeMillis() + 15 * 60 * 1000,
         )
-        bookings[booking.id] = booking
+        sharedBookings[booking.id] = booking
         return booking
     }
 
@@ -75,7 +79,25 @@ class FakeBookingRepository : BookingRepository {
         return update(bookingId) { it.copy(status = BookingStatus.PAID) }
     }
 
-    override suspend fun getBooking(bookingId: String): Booking = update(bookingId) { it }
+    override suspend fun getBooking(bookingId: String): Booking {
+        seedIfNeeded()
+        return update(bookingId) { it }
+    }
+
+    override suspend fun getMyBookings(): List<BookingListItem> {
+        seedIfNeeded()
+        val updated = NepalTime.formatDateTime(System.currentTimeMillis())
+        return sharedBookings.values.reversed().map { b ->
+            BookingListItem(
+                id = b.id,
+                packageName = b.packageName,
+                dateLabel = b.dateLabel,
+                slotLabel = b.slotLabel,
+                status = b.status,
+                lastUpdatedLabel = updated,
+            )
+        }
+    }
 
     override suspend fun cancelBooking(bookingId: String): Booking {
         delay(300)
@@ -110,7 +132,35 @@ class FakeBookingRepository : BookingRepository {
     }
 
     private fun update(id: String, change: (Booking) -> Booking): Booking {
-        val current = bookings[id] ?: throw AppError("NOT_FOUND")
-        return change(current).also { bookings[id] = it }
+        val current = sharedBookings[id] ?: throw AppError("NOT_FOUND")
+        return change(current).also { sharedBookings[id] = it }
+    }
+
+    companion object {
+        private val sharedBookings = linkedMapOf<String, Booking>()
+
+        private fun seedIfNeeded() {
+            if (!DevConfig.ENABLED || sharedBookings.isNotEmpty()) return
+            sharedBookings["demo-verify"] = Booking(
+                id = "demo-verify",
+                packageName = "Basic Health",
+                pricePaisa = 450000,
+                dateLabel = "Wed 25 Nov",
+                slotLabel = "07:00-09:00",
+                address = "Patan, Lalitpur",
+                status = BookingStatus.AWAITING_VERIFICATION,
+                holdExpiresAtMillis = System.currentTimeMillis() + 15 * 60 * 1000,
+            )
+            sharedBookings["demo-done"] = Booking(
+                id = "demo-done",
+                packageName = "Basic Health",
+                pricePaisa = 450000,
+                dateLabel = "Mon 16 Nov",
+                slotLabel = "09:00-11:00",
+                address = "Lakeside, Pokhara",
+                status = BookingStatus.COMPLETED,
+                holdExpiresAtMillis = System.currentTimeMillis(),
+            )
+        }
     }
 }

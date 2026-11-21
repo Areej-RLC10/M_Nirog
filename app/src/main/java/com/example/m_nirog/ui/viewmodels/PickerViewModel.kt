@@ -11,6 +11,7 @@ import com.example.m_nirog.core.SessionStore
 import com.example.m_nirog.models.City
 import com.example.m_nirog.models.PickerJobStatus
 import com.example.m_nirog.models.PickerPickup
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,21 +57,23 @@ private fun demoPickups() = listOf(
     ),
 )
 
-class PickerViewModel(app: Application) : AndroidViewModel(app) {
-    private val appContext = app.applicationContext
-    private val store = SessionStore(app)
-    private val api = ApiClient(store)
-
+internal class PickerController(
+    private val scope: CoroutineScope,
+    private val api: ApiClient,
+    private val isStaffSession: () -> Boolean,
+    private val readUriBytes: suspend (String) -> ByteArray,
+    private val encodeBase64: (ByteArray) -> String,
+    private val nowMs: () -> Long = { System.currentTimeMillis() },
+) {
     private val _state = MutableStateFlow(PickerUiState())
     val state: StateFlow<PickerUiState> = _state.asStateFlow()
 
     fun load() {
-        val isStaff = store.role() == "PICKER" || store.role() == "ADMIN"
-        if (!isStaff) {
+        if (!isStaffSession()) {
             _state.update { it.copy(pickups = demoPickups(), liveMode = false, error = null) }
             return
         }
-        viewModelScope.launch {
+        scope.launch {
             _state.update { it.copy(busy = true, liveMode = true, error = null) }
             runCatching { parseList(JSONArray(api.get("/picker/pickups"))) }
                 .onSuccess { list -> _state.update { it.copy(pickups = list, busy = false, liveMode = true) } }
@@ -80,7 +83,7 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun assignPaidBookings() {
         if (!_state.value.liveMode) return
-        viewModelScope.launch {
+        scope.launch {
             _state.update { it.copy(busy = true, error = null) }
             runCatching { parseList(JSONArray(api.post("/picker/assign-paid", JSONObject()))) }
                 .onSuccess { list ->
@@ -95,12 +98,12 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
     fun markArrived(pickupId: String) {
         if (!_state.value.liveMode) {
             updatePickup(pickupId) {
-                it.copy(status = PickerJobStatus.ARRIVED, arrivedAtMillis = System.currentTimeMillis())
+                it.copy(status = PickerJobStatus.ARRIVED, arrivedAtMillis = nowMs())
             }
             _state.update { it.copy(error = null, message = "Arrival recorded. 15-minute wait timer started.") }
             return
         }
-        viewModelScope.launch {
+        scope.launch {
             _state.update { it.copy(busy = true, error = null) }
             runCatching { parsePickup(JSONObject(api.post("/picker/pickups/$pickupId/arrive", JSONObject()))) }
                 .onSuccess { updated ->
@@ -118,13 +121,13 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
             updatePickup(pickupId) {
                 it.copy(
                     status = PickerJobStatus.ARRIVED,
-                    arrivedAtMillis = System.currentTimeMillis() - 16 * 60 * 1000L,
+                    arrivedAtMillis = nowMs() - 16 * 60 * 1000L,
                 )
             }
             _state.update { it.copy(error = null, message = "Dev: 15-minute wait completed.") }
             return
         }
-        viewModelScope.launch {
+        scope.launch {
             _state.update { it.copy(busy = true, error = null) }
             runCatching { parsePickup(JSONObject(api.post("/picker/pickups/$pickupId/dev-complete-wait", JSONObject()))) }
                 .onSuccess { updated ->
@@ -147,7 +150,7 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(error = null, message = "Sample $code marked as collected.") }
             return
         }
-        viewModelScope.launch {
+        scope.launch {
             _state.update { it.copy(busy = true, error = null) }
             runCatching {
                 val body = JSONObject().put("sampleCode", code)
@@ -174,7 +177,7 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
     fun markNoShow(pickupId: String) {
         val job = _state.value.find(pickupId) ?: return
         val arrived = job.arrivedAtMillis
-        val waitedMs = if (arrived == null) 0L else System.currentTimeMillis() - arrived
+        val waitedMs = if (arrived == null) 0L else nowMs() - arrived
         if (waitedMs < 15 * 60 * 1000L) {
             _state.update { it.copy(error = "You must wait 15 minutes before marking no-show.") }
             return
@@ -189,13 +192,11 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(error = null, message = "Marked as patient no-show.") }
             return
         }
-        viewModelScope.launch {
+        scope.launch {
             _state.update { it.copy(busy = true, error = null) }
             runCatching {
-                val bytes = withContext(Dispatchers.IO) {
-                    appContext.contentResolver.openInputStream(Uri.parse(photoUri))?.use { it.readBytes() }
-                } ?: throw IllegalStateException("Could not read doorway photo.")
-                val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                val bytes = readUriBytes(photoUri)
+                val b64 = encodeBase64(bytes)
                 val body = JSONObject().put("photoBase64", b64)
                 parsePickup(JSONObject(api.post("/picker/pickups/$pickupId/no-show", body)))
             }.onSuccess { updated ->
@@ -250,4 +251,33 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
             noShowPhotoUri = photo,
         )
     }
+}
+
+class PickerViewModel(app: Application) : AndroidViewModel(app) {
+    private val appContext = app.applicationContext
+    private val store = SessionStore(app)
+    private val controller = PickerController(
+        scope = viewModelScope,
+        api = ApiClient(store),
+        isStaffSession = { store.role() == "PICKER" || store.role() == "ADMIN" },
+        readUriBytes = { uri ->
+            withContext(Dispatchers.IO) {
+                appContext.contentResolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
+            } ?: throw IllegalStateException("Could not read doorway photo.")
+        },
+        encodeBase64 = { bytes -> Base64.encodeToString(bytes, Base64.NO_WRAP) },
+    )
+
+    val state: StateFlow<PickerUiState> = controller.state
+
+    fun load() = controller.load()
+    fun assignPaidBookings() = controller.assignPaidBookings()
+    fun markArrived(pickupId: String) = controller.markArrived(pickupId)
+    fun devCompleteWait(pickupId: String) = controller.devCompleteWait(pickupId)
+    fun collectSample(pickupId: String, barcode: String) = controller.collectSample(pickupId, barcode)
+    suspend fun fetchNoShowPhotoBytes(pickupId: String): ByteArray? = controller.fetchNoShowPhotoBytes(pickupId)
+    fun attachNoShowPhoto(pickupId: String, uri: String) = controller.attachNoShowPhoto(pickupId, uri)
+    fun markNoShow(pickupId: String) = controller.markNoShow(pickupId)
+    fun clearFeedback() = controller.clearFeedback()
+    fun reset() = controller.reset()
 }

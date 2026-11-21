@@ -12,9 +12,9 @@ import com.example.m_nirog.ui.design.NirogTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         NirogNotifications.ensureChannels(this)
         handleNotificationIntent(intent)
-        enableEdgeToEdge()
         setContent {
             NirogTheme { AppNav() }
         }
@@ -27,13 +27,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNotificationIntent(intent: Intent?) {
-        if (intent == null) return
-        val bookingId = intent.getStringExtra("bookingId")
-        val category = intent.getStringExtra("category")
-        if (!bookingId.isNullOrBlank() || !category.isNullOrBlank()) {
-            NirogNotifications.emitDeepLink(bookingId, category)
+        val extras = intent?.extras ?: return
+        val bookingId = extras.getString(NirogNotifications.EXTRA_BOOKING_ID)
+            ?: extras.getString("bookingId")
+        val category = extras.getString(NirogNotifications.EXTRA_CATEGORY)
+            ?: extras.getString("category")
+        val notificationId = extras.getString(NirogNotifications.EXTRA_NOTIFICATION_ID)
+            ?: extras.getString("notificationId")
+        if (!bookingId.isNullOrBlank() || !category.isNullOrBlank() || !notificationId.isNullOrBlank()) {
+            NirogNotifications.emitDeepLink(
+                bookingId = bookingId,
+                category = category,
+                notificationId = notificationId,
+            )
+            intent.removeExtra(NirogNotifications.EXTRA_BOOKING_ID)
+            intent.removeExtra(NirogNotifications.EXTRA_CATEGORY)
+            intent.removeExtra(NirogNotifications.EXTRA_NOTIFICATION_ID)
             intent.removeExtra("bookingId")
             intent.removeExtra("category")
+            intent.removeExtra("notificationId")
         }
     }
 }

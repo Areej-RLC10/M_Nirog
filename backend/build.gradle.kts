@@ -42,4 +42,5 @@ dependencies {
     implementation("ch.qos.logback:logback-classic:1.5.18")
     implementation("org.postgresql:postgresql:42.7.5")
     implementation("com.zaxxer:HikariCP:6.2.1")
+    testImplementation(kotlin("test-junit"))
 }

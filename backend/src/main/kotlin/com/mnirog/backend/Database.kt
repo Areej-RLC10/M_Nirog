@@ -66,8 +66,23 @@ object Database {
                     CREATE TABLE IF NOT EXISTS otp_codes (
                         phone TEXT PRIMARY KEY,
                         code TEXT NOT NULL,
-                        expires_at_ms BIGINT NOT NULL
+                        expires_at_ms BIGINT NOT NULL,
+                        attempts INT NOT NULL DEFAULT 0,
+                        send_count INT NOT NULL DEFAULT 0,
+                        window_start_ms BIGINT NOT NULL DEFAULT 0,
+                        last_sent_at_ms BIGINT NOT NULL DEFAULT 0,
+                        locked_until_ms BIGINT NOT NULL DEFAULT 0
                     );
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS send_count INT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS window_start_ms BIGINT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS last_sent_at_ms BIGINT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS locked_until_ms BIGINT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS send_count INT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS window_start_ms BIGINT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS last_sent_at_ms BIGINT NOT NULL DEFAULT 0;
+                    ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS locked_until_ms BIGINT NOT NULL DEFAULT 0;
                     CREATE TABLE IF NOT EXISTS packages (
                         id TEXT PRIMARY KEY,
                         name TEXT NOT NULL,

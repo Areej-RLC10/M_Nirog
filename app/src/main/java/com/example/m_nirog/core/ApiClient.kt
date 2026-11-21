@@ -8,7 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-class ApiClient(private val store: SessionStore) {
+class ApiClient(
+    private val store: AuthTokenStore,
+    private val baseUrl: String = ApiConfig.BASE_URL,
+) {
 
     suspend fun get(path: String): String = request("GET", path, null)
 
@@ -29,7 +32,7 @@ class ApiClient(private val store: SessionStore) {
     }
 
     private fun executeGetBytes(path: String, token: String?): Pair<String, ByteArray>? {
-        val conn = (URL("${ApiConfig.BASE_URL}$path").openConnection() as HttpURLConnection).apply {
+        val conn = (URL("$baseUrl$path").openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10000
             readTimeout = 15000
@@ -71,7 +74,7 @@ class ApiClient(private val store: SessionStore) {
         jsonBody: String?,
         token: String?,
     ): Pair<Int, String> {
-        val conn = (URL("${ApiConfig.BASE_URL}$path").openConnection() as HttpURLConnection).apply {
+        val conn = (URL("$baseUrl$path").openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 10000
             readTimeout = 15000
@@ -117,7 +120,10 @@ class ApiClient(private val store: SessionStore) {
             val refresh = store.refreshToken() ?: return null
             val body = JSONObject().put("refreshToken", refresh).toString()
             val (status, raw) = executeRaw("POST", "/auth/refresh", body, null)
-            if (status !in 200..299) return null
+            if (status !in 200..299) {
+                if (status == 401) store.clear()
+                return null
+            }
             return runCatching {
                 val obj = JSONObject(raw)
                 val access = obj.getString("accessToken")

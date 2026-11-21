@@ -147,6 +147,7 @@ fun AppNav() {
             return@LaunchedEffect
         }
         NirogNotifications.consumeDeepLink()
+        link.notificationId?.let { profileVm.markNotificationRead(it) }
         val bId = link.bookingId
         if (!isStaffRole && !bId.isNullOrBlank()) {
             booking.openBooking(bId)

@@ -8,6 +8,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -72,10 +73,10 @@ private fun insertNotificationAndGetToken(
     title: String,
     body: String,
     category: String,
-): String? {
+): Pair<String, String?> {
     val now = System.currentTimeMillis()
     val id = UUID.randomUUID().toString()
-    return Database.useConnection { conn ->
+    val fcmToken = Database.useConnection { conn ->
         conn.prepareStatement(
             """
             INSERT INTO notifications (id, user_id, booking_id, title, body, category, is_read, created_at_ms)
@@ -99,6 +100,7 @@ private fun insertNotificationAndGetToken(
             }
         }
     }
+    return id to fcmToken
 }
 
 fun notifyUser(
@@ -108,10 +110,10 @@ fun notifyUser(
     body: String,
     category: String = "BOOKING_UPDATE",
 ) {
-    val fcmToken = insertNotificationAndGetToken(userId, bookingId, title, body, category)
+    val (notificationId, fcmToken) = insertNotificationAndGetToken(userId, bookingId, title, body, category)
     if (!fcmToken.isNullOrBlank()) {
         notifScope.launch {
-            runCatching { dispatchFcmPush(fcmToken, title, body, bookingId, category) }
+            runCatching { dispatchFcmPush(fcmToken, title, body, bookingId, category, notificationId) }
                 .onFailure { it.printStackTrace() }
         }
     }
@@ -201,6 +203,16 @@ fun notifyStatusTransition(
             reason ?: "Your booking has been cancelled.",
             "BOOKING_UPDATE",
         )
+        status == "EXPIRED" -> Triple(
+            "Booking hold expired",
+            reason ?: "Your 15-minute payment hold expired and the time slot was released.",
+            "BOOKING_UPDATE",
+        )
+        status == "EXPIRED" -> Triple(
+            "Booking hold expired",
+            reason ?: "Your 15-minute payment hold expired and the time slot was released.",
+            "BOOKING_UPDATE",
+        )
         else -> return
     }
     notifyUser(userId, bookingId, title, body, cat)
@@ -212,6 +224,7 @@ private suspend fun dispatchFcmPush(
     body: String,
     bookingId: String?,
     category: String,
+    notificationId: String? = null,
 ): Pair<Boolean, String> {
     val credPath = System.getenv("GOOGLE_APPLICATION_CREDENTIALS")?.trim()?.takeIf { it.isNotBlank() }
         ?: return false to "GOOGLE_APPLICATION_CREDENTIALS not set"
@@ -229,7 +242,11 @@ private suspend fun dispatchFcmPush(
     val accessToken = getOrFetchFcmAccessToken(clientEmail, privateKeyPem)
         ?: return false to "Failed to mint Google OAuth2 access token"
 
-    val channelId = if (category == "URGENT_RESULT") "mnirog_urgent" else "mnirog_updates"
+    val channelId = if (category in setOf("URGENT_RESULT", "RECOLLECTION", "NO_SHOW", "CORRECTION_REQUIRED")) {
+        "mnirog_urgent"
+    } else {
+        "mnirog_updates"
+    }
 
     val payload = buildJsonObject {
         put(
@@ -262,6 +279,7 @@ private suspend fun dispatchFcmPush(
                         put("body", body)
                         put("category", category)
                         if (bookingId != null) put("bookingId", bookingId)
+                        if (notificationId != null) put("notificationId", notificationId)
                     },
                 )
             },
@@ -373,14 +391,22 @@ fun Route.registerNotificationRoutes() {
     }
 
     post("/me/notifications/test") {
+        if (!ServerConfig.enableDevRoutes) {
+            call.respond(HttpStatusCode.NotFound, ErrorResponse("DEV_ROUTES_DISABLED", "Dev routes are disabled"))
+            return@post
+        }
+        if (!ServerConfig.enableDevRoutes) {
+            call.respond(HttpStatusCode.NotFound, ErrorResponse("DEV_ROUTES_DISABLED", "Dev routes are disabled"))
+            return@post
+        }
         val userId = call.principal<JWTPrincipal>()!!.subject!!
         val title = "M-Nirog test push"
         val body = "Firebase Cloud Messaging is connected for your account."
-        val token = insertNotificationAndGetToken(userId, null, title, body, "BOOKING_UPDATE")
+        val (notificationId, token) = insertNotificationAndGetToken(userId, null, title, body, "BOOKING_UPDATE")
         if (token.isNullOrBlank()) {
             call.respond(mapOf("status" to "no_token", "detail" to "Saved to inbox, but no FCM device token is registered yet"))
         } else {
-            val (ok, detail) = dispatchFcmPush(token, title, body, null, "BOOKING_UPDATE")
+            val (ok, detail) = dispatchFcmPush(token, title, body, null, "BOOKING_UPDATE", notificationId)
             call.respond(mapOf("status" to if (ok) "sent" else "failed", "detail" to detail))
         }
     }

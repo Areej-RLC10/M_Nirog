@@ -36,7 +36,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Base64
 import java.util.Locale
 import java.util.UUID
-import kotlin.random.Random
+import kotlinx.coroutines.Dispatchers
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8085
@@ -70,10 +70,12 @@ fun Application.module() {
         }
     }
 
-    launch {
+    launch(Dispatchers.IO) {
         while (isActive) {
             runCatching { expireHeldBookings() }
+                .onFailure { it.printStackTrace() }
             runCatching { autoAdvanceExpiredVerifications() }
+                .onFailure { it.printStackTrace() }
             delay(30_000L)
         }
     }
@@ -88,92 +90,14 @@ fun Application.module() {
 
         post("/auth/otp/send") {
             val req = call.receive<SendOtpRequest>()
-            val phone = normalizePhone(req.phone)
-            val code = Random.nextInt(100000, 999999).toString()
-            val expiresAt = System.currentTimeMillis() + 5 * 60_000L
-
-            Database.useConnection { conn ->
-                conn.prepareStatement(
-                    """
-                    INSERT INTO otp_codes (phone, code, expires_at_ms)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT (phone) DO UPDATE SET code = EXCLUDED.code, expires_at_ms = EXCLUDED.expires_at_ms
-                    """.trimIndent(),
-                ).use { ps ->
-                    ps.setString(1, phone)
-                    ps.setString(2, code)
-                    ps.setLong(3, expiresAt)
-                    ps.executeUpdate()
-                }
-            }
-            println("[DEV OTP] $phone -> $code")
-            call.respond(SendOtpResponse(sent = true, phone = phone, devOtp = code))
+            val (status, body) = OtpService.sendOtp(req.phone)
+            call.respond(status, body)
         }
 
         post("/auth/otp/verify") {
             val req = call.receive<VerifyOtpRequest>()
-            val phone = normalizePhone(req.phone)
-            val now = System.currentTimeMillis()
-
-            val auth = Database.transaction { conn ->
-                val valid = conn.prepareStatement(
-                    "SELECT code, expires_at_ms FROM otp_codes WHERE phone = ?",
-                ).use { ps ->
-                    ps.setString(1, phone)
-                    ps.executeQuery().use { rs ->
-                        rs.next() && rs.getString("code") == req.code.trim() && rs.getLong("expires_at_ms") >= now
-                    }
-                }
-                if (!valid) return@transaction null
-
-                conn.prepareStatement("DELETE FROM otp_codes WHERE phone = ?").use { ps ->
-                    ps.setString(1, phone)
-                    ps.executeUpdate()
-                }
-
-                var userId: String? = null
-                var role = "PATIENT"
-                var consentVersion: String? = null
-
-                conn.prepareStatement("SELECT id, role, consent_version FROM users WHERE phone = ?").use { ps ->
-                    ps.setString(1, phone)
-                    ps.executeQuery().use { rs ->
-                        if (rs.next()) {
-                            userId = rs.getString("id")
-                            role = rs.getString("role")
-                            consentVersion = rs.getString("consent_version")
-                        }
-                    }
-                }
-
-                if (userId == null) {
-                    val newId = UUID.randomUUID().toString()
-                    conn.prepareStatement(
-                        "INSERT INTO users (id, phone, role, created_at_ms) VALUES (?, ?, 'PATIENT', ?)",
-                    ).use { ps ->
-                        ps.setString(1, newId)
-                        ps.setString(2, phone)
-                        ps.setLong(3, now)
-                        ps.executeUpdate()
-                    }
-                    userId = newId
-                }
-
-                AuthResponse(
-                    accessToken = JwtService.generateAccessToken(userId!!, phone, role),
-                    refreshToken = JwtService.generateRefreshToken(userId!!),
-                    userId = userId!!,
-                    phone = phone,
-                    role = role,
-                    consentVersion = consentVersion,
-                )
-            }
-
-            if (auth == null) {
-                call.respond(HttpStatusCode.Unauthorized, ErrorResponse("INVALID_OTP", "Invalid or expired OTP code"))
-            } else {
-                call.respond(auth)
-            }
+            val (status, body) = OtpService.verifyOtp(req.phone, req.code)
+            call.respond(status, body)
         }
 
         registerPublicAuthRefreshRoute()
@@ -563,6 +487,10 @@ fun Application.module() {
             }
 
             post("/bookings/{id}/pay/dev") {
+                if (!ServerConfig.enableDevRoutes) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("DEV_ROUTES_DISABLED", "Dev routes are disabled"))
+                    return@post
+                }
                 val userId = call.principal<JWTPrincipal>()!!.subject!!
                 val bookingId = call.parameters["id"]!!
                 val now = System.currentTimeMillis()
@@ -812,6 +740,10 @@ fun Application.module() {
             }
 
             post("/picker/pickups/{id}/dev-complete-wait") {
+                if (!ServerConfig.enableDevRoutes) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("DEV_ROUTES_DISABLED", "Dev routes are disabled"))
+                    return@post
+                }
                 val principal = call.principal<JWTPrincipal>()!!
                 if (principal.getClaim("role", String::class) !in setOf("PICKER", "ADMIN")) {
                     call.respond(HttpStatusCode.Forbidden, ErrorResponse("FORBIDDEN", "Staff picker access required"))
@@ -1081,45 +1013,43 @@ private fun loadProfile(userId: String): ProfileDto? {
     }
 }
 
-private fun expireHeldBookings() {
+private fun expireHeldBookings(): Int {
     val now = System.currentTimeMillis()
-    Database.transaction { conn ->
-        val expiredSlots = mutableListOf<String>()
+    val expiredRows = Database.transaction { conn ->
+        val rows = mutableListOf<Triple<String, String, String>>()
         conn.prepareStatement(
             """
             UPDATE bookings
             SET status = 'EXPIRED', hold_expires_at_ms = NULL, updated_at_ms = ?
             WHERE status = 'PENDING_PAYMENT' AND hold_expires_at_ms IS NOT NULL AND hold_expires_at_ms < ?
-            RETURNING slot_id
+            RETURNING id, user_id, slot_id
             """.trimIndent(),
         ).use { ps ->
             ps.setLong(1, now)
             ps.setLong(2, now)
             ps.executeQuery().use { rs ->
-                while (rs.next()) expiredSlots.add(rs.getString("slot_id"))
+                while (rs.next()) {
+                    rows.add(Triple(rs.getString("id"), rs.getString("user_id"), rs.getString("slot_id")))
+                }
             }
         }
-        if (expiredSlots.isNotEmpty()) {
+        if (rows.isNotEmpty()) {
             conn.prepareStatement(
                 "UPDATE slots SET booked_count = GREATEST(booked_count - 1, 0) WHERE id = ?",
             ).use { ps ->
-                expiredSlots.forEach { slotId ->
+                rows.forEach { (_, _, slotId) ->
                     ps.setString(1, slotId)
                     ps.addBatch()
                 }
                 ps.executeBatch()
             }
         }
+        rows
     }
-}
-
-private fun normalizePhone(raw: String): String {
-    val digits = raw.filter { it.isDigit() }
-    return when {
-        digits.startsWith("977") -> "+$digits"
-        digits.length == 10 && digits.startsWith("9") -> "+977$digits"
-        else -> "+$digits"
+    expiredRows.forEach { (bookingId, userId, _) ->
+        notifyStatusTransition(userId, bookingId, "EXPIRED")
     }
+    return expiredRows.size
 }
 
 private fun formatDateLabel(dateIso: String): String {

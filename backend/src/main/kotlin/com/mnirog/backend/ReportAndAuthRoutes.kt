@@ -237,11 +237,16 @@ fun Route.registerReportAndBookingDevRoutes() {
         if (dto == null) {
             call.respond(HttpStatusCode.NotFound, ErrorResponse("NOT_FOUND", "Booking not found"))
         } else {
+            notifyStatusTransition(userId, bookingId, dto.status, reason = note)
             call.respond(dto)
         }
     }
 
     post("/bookings/{id}/dev/advance") {
+        if (!ServerConfig.enableDevRoutes) {
+            call.respond(HttpStatusCode.NotFound, ErrorResponse("DEV_ROUTES_DISABLED", "Dev routes are disabled"))
+            return@post
+        }
         val userId = call.principal<JWTPrincipal>()!!.subject!!
         val bookingId = call.parameters["id"]!!
         val currentStatus = Database.useConnection { conn ->
@@ -267,6 +272,10 @@ fun Route.registerReportAndBookingDevRoutes() {
     }
 
     post("/bookings/{id}/dev/status") {
+        if (!ServerConfig.enableDevRoutes) {
+            call.respond(HttpStatusCode.NotFound, ErrorResponse("DEV_ROUTES_DISABLED", "Dev routes are disabled"))
+            return@post
+        }
         val userId = call.principal<JWTPrincipal>()!!.subject!!
         val bookingId = call.parameters["id"]!!
         val req = call.receive<DevStatusRequest>()
@@ -576,23 +585,45 @@ private fun defaultValuesForPackage(packageId: String, urgent: Boolean): List<La
     }
 }
 
-fun autoAdvanceExpiredVerifications() {
+fun autoAdvanceExpiredVerifications(): Int {
     val now = System.currentTimeMillis()
-    Database.useConnection { conn ->
-        conn.prepareStatement(
+    val advanced = Database.transaction { conn ->
+        val rows = conn.prepareStatement(
             """
             UPDATE bookings
             SET status = 'DOCTOR_REVIEW', updated_at_ms = ?
             WHERE status = 'AWAITING_VERIFICATION'
               AND verification_deadline_ms IS NOT NULL
               AND verification_deadline_ms < ?
+            RETURNING id, user_id, package_id
             """.trimIndent(),
         ).use { ps ->
             ps.setLong(1, now)
             ps.setLong(2, now)
-            ps.executeUpdate()
+            ps.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(Triple(rs.getString("id"), rs.getString("user_id"), rs.getString("package_id")))
+                    }
+                }
+            }
         }
+        rows.forEach { (bookingId, _, packageId) ->
+            ensureLabReportRow(conn, bookingId, packageId, urgent = false, withDoctor = true)
+            conn.prepareStatement(
+                "UPDATE lab_reports SET verified_at_ms = COALESCE(verified_at_ms, ?) WHERE booking_id = ?",
+            ).use { ps ->
+                ps.setLong(1, now)
+                ps.setString(2, bookingId)
+                ps.executeUpdate()
+            }
+        }
+        rows
     }
+    advanced.forEach { (bookingId, userId, _) ->
+        notifyStatusTransition(userId, bookingId, "DOCTOR_REVIEW")
+    }
+    return advanced.size
 }
 
 private fun formatReportDate(dateIso: String): String {

@@ -10,7 +10,16 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class SessionStore(context: Context) {
+interface AuthTokenStore {
+    fun accessToken(): String?
+    fun refreshToken(): String?
+    fun role(): String
+    fun saveTokens(accessToken: String, refreshToken: String)
+    fun saveRole(role: String)
+    fun clear()
+}
+
+class SessionStore(context: Context) : AuthTokenStore {
     private val prefs = context.applicationContext.getSharedPreferences("session", Context.MODE_PRIVATE)
 
     fun isLoggedIn(): Boolean = prefs.getBoolean("logged_in", false)
@@ -19,20 +28,20 @@ class SessionStore(context: Context) {
     fun consentVersion(): String? = prefs.getString("consent_version", null)
     fun saveConsent(version: String) = prefs.edit().putString("consent_version", version).apply()
 
-    fun role(): String = prefs.getString("role", "PATIENT") ?: "PATIENT"
-    fun saveRole(role: String) = prefs.edit().putString("role", role).apply()
+    override fun role(): String = prefs.getString("role", "PATIENT") ?: "PATIENT"
+    override fun saveRole(role: String) = prefs.edit().putString("role", role).apply()
 
-    fun saveTokens(accessToken: String, refreshToken: String) {
+    override fun saveTokens(accessToken: String, refreshToken: String) {
         prefs.edit()
             .putString("access_enc", encrypt(accessToken))
             .putString("refresh_enc", encrypt(refreshToken))
             .apply()
     }
 
-    fun accessToken(): String? = prefs.getString("access_enc", null)?.let(::decrypt)
-    fun refreshToken(): String? = prefs.getString("refresh_enc", null)?.let(::decrypt)
+    override fun accessToken(): String? = prefs.getString("access_enc", null)?.let(::decrypt)
+    override fun refreshToken(): String? = prefs.getString("refresh_enc", null)?.let(::decrypt)
 
-    fun clear() = prefs.edit().clear().apply()
+    override fun clear() = prefs.edit().clear().apply()
 
     private fun getOrCreateKey(): SecretKey? = runCatching {
         val ks = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }

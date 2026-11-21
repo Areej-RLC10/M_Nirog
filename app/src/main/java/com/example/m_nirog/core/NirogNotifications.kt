@@ -1,7 +1,6 @@
 package com.example.m_nirog.core
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -15,6 +14,8 @@ import androidx.core.content.ContextCompat
 import com.example.m_nirog.MainActivity
 import com.example.m_nirog.R
 import com.google.firebase.messaging.FirebaseMessaging
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,28 +24,32 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 data class NotificationDeepLink(
     val bookingId: String?,
     val category: String?,
+    val notificationId: String? = null,
 )
 
 object NirogNotifications {
     const val CHANNEL_UPDATES = "mnirog_updates"
     const val CHANNEL_URGENT = "mnirog_urgent"
+    const val EXTRA_BOOKING_ID = "nirog_booking_id"
+    const val EXTRA_CATEGORY = "nirog_category"
+    const val EXTRA_NOTIFICATION_ID = "nirog_notification_id"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val _pendingDeepLink = MutableStateFlow<NotificationDeepLink?>(null)
     val pendingDeepLink: StateFlow<NotificationDeepLink?> = _pendingDeepLink.asStateFlow()
 
-    fun emitDeepLink(bookingId: String?, category: String?) {
-        val cleanBooking = bookingId?.takeIf { it.isNotBlank() }
-        val cleanCategory = category?.takeIf { it.isNotBlank() }
-        if (cleanBooking != null || cleanCategory != null) {
-            _pendingDeepLink.value = NotificationDeepLink(cleanBooking, cleanCategory)
-        }
+    fun emitDeepLink(bookingId: String?, category: String?, notificationId: String? = null) {
+        if (bookingId.isNullOrBlank() && category.isNullOrBlank() && notificationId.isNullOrBlank()) return
+        _pendingDeepLink.value = NotificationDeepLink(
+            bookingId = bookingId?.takeIf { it.isNotBlank() },
+            category = category?.takeIf { it.isNotBlank() },
+            notificationId = notificationId?.takeIf { it.isNotBlank() },
+        )
     }
 
     fun consumeDeepLink() {
@@ -53,34 +58,32 @@ object NirogNotifications {
 
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
         val updates = NotificationChannel(
             CHANNEL_UPDATES,
-            "Booking & Report Updates",
+            "Booking & Lab Updates",
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
-            description = "Booking status updates, sample pickup alerts, and lab report notifications."
+            description = "Payment confirmations, sample pickup updates, and reports ready"
         }
         val urgent = NotificationChannel(
             CHANNEL_URGENT,
-            "Urgent Lab Results",
+            "Urgent Results & Recollection",
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
-            description = "Critical lab result alerts requiring immediate attention."
-            enableVibration(true)
-            enableLights(true)
+            description = "Critical health alerts, flagged results, and sample recollection"
         }
         nm.createNotificationChannel(updates)
         nm.createNotificationChannel(urgent)
     }
 
-    @SuppressLint("MissingPermission")
     fun showNotification(
         context: Context,
         title: String,
         body: String,
-        category: String?,
-        bookingId: String?,
+        category: String = "GENERAL",
+        bookingId: String? = null,
+        notificationId: String? = null,
     ) {
         ensureChannels(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -89,56 +92,54 @@ object NirogNotifications {
         ) {
             return
         }
+        val isUrgent = category == "URGENT_RESULT" || category == "RECOLLECTION" || category == "NO_SHOW" || category == "CORRECTION_REQUIRED"
+        val channelId = if (isUrgent) CHANNEL_URGENT else CHANNEL_UPDATES
 
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
-            if (!bookingId.isNullOrBlank()) putExtra("bookingId", bookingId)
-            if (!category.isNullOrBlank()) putExtra("category", category)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            bookingId?.let { putExtra(EXTRA_BOOKING_ID, it) }
+            notificationId?.let { putExtra(EXTRA_NOTIFICATION_ID, it) }
+            putExtra(EXTRA_CATEGORY, category)
         }
-        val pendingIntent = PendingIntent.getActivity(
+        val reqCode = ((notificationId ?: "") + ":" + (bookingId ?: "") + ":" + category + ":" + title).hashCode()
+        val pi = PendingIntent.getActivity(
             context,
-            (System.currentTimeMillis() and 0xFFFF).toInt(),
+            reqCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val channelId = if (category == "URGENT_RESULT") CHANNEL_URGENT else CHANNEL_UPDATES
-        val notification = NotificationCompat.Builder(context, channelId)
+        val notif = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(pi)
             .build()
 
         runCatching {
-            NotificationManagerCompat.from(context).notify(
-                (System.currentTimeMillis() and 0x7FFFFFFF).toInt(),
-                notification,
-            )
+            NotificationManagerCompat.from(context).notify(reqCode, notif)
         }
     }
 
     @Suppress("DEPRECATION")
     fun syncTokenIfLoggedIn(context: Context) {
-        val store = SessionStore(context)
-        if (!store.isLoggedIn() || store.accessToken().isNullOrBlank()) return
+        val store = SessionStore(context.applicationContext)
+        if (!store.isLoggedIn()) return
         runCatching {
             FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
                 if (!token.isNullOrBlank()) {
-                    uploadToken(context, token)
+                    uploadToken(context.applicationContext, token)
                 }
             }
         }
     }
 
     fun uploadToken(context: Context, token: String) {
-        val store = SessionStore(context)
-        if (!store.isLoggedIn() || store.accessToken().isNullOrBlank()) return
+        val store = SessionStore(context.applicationContext)
+        if (!store.isLoggedIn() || token.isBlank()) return
         scope.launch {
             runCatching {
                 ApiClient(store).post("/me/fcm-token", JSONObject().put("token", token))
@@ -152,18 +153,15 @@ object NirogNotifications {
             runCatching {
                 val conn = (URL("${ApiConfig.BASE_URL}/me/fcm-token/clear").openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 5000
-                    readTimeout = 5000
-                    setRequestProperty("Authorization", "Bearer $accessToken")
-                    setRequestProperty("Content-Type", "application/json")
+                    connectTimeout = 5_000
+                    readTimeout = 5_000
                     doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Authorization", "Bearer $accessToken")
                 }
-                try {
-                    conn.outputStream.use { it.write("{}".toByteArray()) }
-                    conn.responseCode
-                } finally {
-                    conn.disconnect()
-                }
+                conn.outputStream.use { it.write("{}".toByteArray(Charsets.UTF_8)) }
+                conn.responseCode
+                conn.disconnect()
             }
         }
     }

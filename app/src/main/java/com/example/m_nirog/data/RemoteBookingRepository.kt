@@ -17,8 +17,8 @@ import com.example.m_nirog.models.TimeSlot
 import org.json.JSONArray
 import org.json.JSONObject
 
-class RemoteBookingRepository(store: SessionStore) : BookingRepository {
-    private val api = ApiClient(store)
+class RemoteBookingRepository(private val api: ApiClient) : BookingRepository {
+    constructor(store: SessionStore) : this(ApiClient(store))
     private val cachedBookings = linkedMapOf<String, Booking>()
 
     override suspend fun getPackages(): List<CheckupPackage> {

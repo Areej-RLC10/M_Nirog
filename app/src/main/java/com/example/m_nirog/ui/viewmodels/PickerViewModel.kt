@@ -6,6 +6,7 @@ import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.m_nirog.core.ApiClient
+import com.example.m_nirog.core.DevConfig
 import com.example.m_nirog.core.SessionStore
 import com.example.m_nirog.models.City
 import com.example.m_nirog.models.PickerJobStatus
@@ -112,6 +113,7 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun devCompleteWait(pickupId: String) {
+        if (!DevConfig.ENABLED) return
         if (!_state.value.liveMode) {
             updatePickup(pickupId) {
                 it.copy(
@@ -206,6 +208,10 @@ class PickerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearFeedback() = _state.update { it.copy(error = null, message = null) }
+
+    fun reset() {
+        _state.value = PickerUiState(pickups = if (DevConfig.ENABLED) demoPickups() else emptyList())
+    }
 
     private fun replacePickup(updated: PickerPickup) {
         updatePickup(updated.id) { updated }

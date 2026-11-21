@@ -613,6 +613,51 @@ fun Application.module() {
                 }
             }
 
+            post("/bookings/{id}/expire") {
+                val userId = call.principal<JWTPrincipal>()!!.subject!!
+                val bookingId = call.parameters["id"]!!
+                val now = System.currentTimeMillis()
+                val found = Database.transaction { conn ->
+                    val row = conn.prepareStatement(
+                        "SELECT status, slot_id FROM bookings WHERE id = ? AND user_id = ? FOR UPDATE",
+                    ).use { ps ->
+                        ps.setString(1, bookingId)
+                        ps.setString(2, userId)
+                        ps.executeQuery().use { rs ->
+                            if (!rs.next()) null else rs.getString("status") to rs.getString("slot_id")
+                        }
+                    } ?: return@transaction false
+
+                    if (row.first == "PENDING_PAYMENT") {
+                        conn.prepareStatement(
+                            "UPDATE bookings SET status = 'EXPIRED', hold_expires_at_ms = NULL, updated_at_ms = ? WHERE id = ?",
+                        ).use { ps ->
+                            ps.setLong(1, now)
+                            ps.setString(2, bookingId)
+                            ps.executeUpdate()
+                        }
+                        conn.prepareStatement(
+                            "UPDATE slots SET booked_count = GREATEST(booked_count - 1, 0) WHERE id = ?",
+                        ).use { ps ->
+                            ps.setString(1, row.second)
+                            ps.executeUpdate()
+                        }
+                    }
+                    true
+                }
+
+                if (!found) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("NOT_FOUND", "Booking not found"))
+                } else {
+                    val dto = loadBookingDto(bookingId, userId)
+                    if (dto == null) {
+                        call.respond(HttpStatusCode.NotFound, ErrorResponse("NOT_FOUND", "Booking not found"))
+                    } else {
+                        call.respond(dto)
+                    }
+                }
+            }
+
             post("/bookings/{id}/cancel") {
                 val userId = call.principal<JWTPrincipal>()!!.subject!!
                 val bookingId = call.parameters["id"]!!

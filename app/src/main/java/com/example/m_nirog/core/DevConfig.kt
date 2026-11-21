@@ -1,6 +1,8 @@
 package com.example.m_nirog.core
 
-/** Turn off before any release build. Shows the dev-only "advance status" button. */
+import com.example.m_nirog.BuildConfig
+
+/** Automatically disabled in release builds. Gates dev-only shortcuts. */
 object DevConfig {
-    const val ENABLED = true
+    val ENABLED: Boolean get() = BuildConfig.DEBUG
 }

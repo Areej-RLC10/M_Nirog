@@ -1,6 +1,7 @@
 package com.example.m_nirog.data
 
 import com.example.m_nirog.core.ApiClient
+import com.example.m_nirog.core.DevConfig
 import com.example.m_nirog.core.NepalTime
 import com.example.m_nirog.core.SessionStore
 import com.example.m_nirog.models.Booking
@@ -111,11 +112,6 @@ class RemoteBookingRepository(store: SessionStore) : BookingRepository {
         )
     }
 
-    override suspend fun verifyPayment(bookingId: String): Booking {
-        api.post("/bookings/$bookingId/pay/dev", JSONObject())
-        return getBooking(bookingId)
-    }
-
     override suspend fun getBooking(bookingId: String): Booking {
         val b = parseBooking(JSONObject(api.get("/bookings/$bookingId")))
         cachedBookings[b.id] = b
@@ -149,13 +145,13 @@ class RemoteBookingRepository(store: SessionStore) : BookingRepository {
     }
 
     override suspend fun expireBooking(bookingId: String): Booking {
-        val current = runCatching { getBooking(bookingId) }.getOrNull() ?: cachedBookings[bookingId]
-        return current?.let {
-            if (it.status == BookingStatus.PENDING_PAYMENT) it.copy(status = BookingStatus.EXPIRED) else it
-        } ?: throw AppError("NOT_FOUND")
+        val b = parseBooking(JSONObject(api.post("/bookings/$bookingId/expire", JSONObject())))
+        cachedBookings[b.id] = b
+        return b
     }
 
     override suspend fun devSetStatus(bookingId: String, status: BookingStatus): Booking {
+        if (!DevConfig.ENABLED) throw AppError("DEV_DISABLED")
         val body = JSONObject().put("status", status.name)
         val b = parseBooking(JSONObject(api.post("/bookings/$bookingId/dev/status", body)))
         cachedBookings[b.id] = b
@@ -163,6 +159,7 @@ class RemoteBookingRepository(store: SessionStore) : BookingRepository {
     }
 
     suspend fun devSetUrgent(bookingId: String): Booking {
+        if (!DevConfig.ENABLED) throw AppError("DEV_DISABLED")
         val body = JSONObject()
             .put("status", BookingStatus.COMPLETED.name)
             .put("urgent", true)
@@ -172,6 +169,7 @@ class RemoteBookingRepository(store: SessionStore) : BookingRepository {
     }
 
     override suspend fun devAdvance(bookingId: String): Booking {
+        if (!DevConfig.ENABLED) throw AppError("DEV_DISABLED")
         val b = parseBooking(JSONObject(api.post("/bookings/$bookingId/dev/advance", JSONObject())))
         cachedBookings[b.id] = b
         return b

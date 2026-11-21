@@ -2,6 +2,7 @@ package com.example.m_nirog.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.m_nirog.core.DevConfig
 import com.example.m_nirog.data.BookingRepository
 import com.example.m_nirog.data.FakeBookingRepository
 import com.example.m_nirog.data.RemoteBookingRepository
@@ -117,7 +118,7 @@ class BookingViewModel(
     fun payWithKhalti() {
         val id = _state.value.booking?.id ?: return
         val remote = repo as? RemoteBookingRepository ?: run {
-            payFake()
+            _state.update { it.copy(error = "Live payment requires server connection.") }
             return
         }
         launchWork {
@@ -187,16 +188,26 @@ class BookingViewModel(
 
     fun consumePaymentFailed() = _state.update { it.copy(paymentFailed = false) }
 
-    fun payFake() = updateBooking { repo.verifyPayment(it) }
     fun cancel() = updateBooking { repo.cancelBooking(it) }
-    fun devAdvance() = updateBooking { repo.devAdvance(it) }
     fun refresh() = updateBooking { repo.getBooking(it) }
     fun expire() = updateBooking { repo.expireBooking(it) }
-    fun devSet(status: BookingStatus) = updateBooking { repo.devSetStatus(it, status) }
 
-    fun devUrgent() = updateBooking { id ->
-        (repo as? RemoteBookingRepository)?.devSetUrgent(id)
-            ?: repo.devSetStatus(id, BookingStatus.COMPLETED)
+    fun devAdvance() {
+        if (!DevConfig.ENABLED) return
+        updateBooking { repo.devAdvance(it) }
+    }
+
+    fun devSet(status: BookingStatus) {
+        if (!DevConfig.ENABLED) return
+        updateBooking { repo.devSetStatus(it, status) }
+    }
+
+    fun devUrgent() {
+        if (!DevConfig.ENABLED) return
+        updateBooking { id ->
+            (repo as? RemoteBookingRepository)?.devSetUrgent(id)
+                ?: repo.devSetStatus(id, BookingStatus.COMPLETED)
+        }
     }
 
     fun startOver() = _state.update {

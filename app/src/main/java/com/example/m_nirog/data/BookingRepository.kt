@@ -20,7 +20,6 @@ interface BookingRepository {
     suspend fun getDays(): List<SlotDay>
     suspend fun getSlots(city: City, dateIso: String): List<TimeSlot>
     suspend fun createBooking(request: BookingRequest, dateLabel: String, slotLabel: String): Booking
-    suspend fun verifyPayment(bookingId: String): Booking
     suspend fun getBooking(bookingId: String): Booking
     suspend fun getMyBookings(): List<BookingListItem>
     suspend fun cancelBooking(bookingId: String): Booking
@@ -72,11 +71,6 @@ class FakeBookingRepository : BookingRepository {
         )
         sharedBookings[booking.id] = booking
         return booking
-    }
-
-    override suspend fun verifyPayment(bookingId: String): Booking {
-        delay(800)
-        return update(bookingId) { it.copy(status = BookingStatus.PAID) }
     }
 
     override suspend fun getBooking(bookingId: String): Booking {

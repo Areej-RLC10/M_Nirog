@@ -126,6 +126,7 @@ fun AppNav() {
         booking.reset()
         bookingsVm.reset()
         profileVm.reset()
+        pickerVm.reset()
         bookingRepo.clearCache()
         nav.navigate(Routes.LOGIN) {
             popUpTo(0) { inclusive = true }
